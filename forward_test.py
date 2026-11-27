@@ -29,7 +29,27 @@ LAST_BAR = tm.SESSION_BARS - 1          # exit at the 4:00 PM close
 RESULTS = os.path.join(HERE, "results.csv")
 STATE = os.path.join(HERE, "state.json")
 SUMMARY = os.path.join(HERE, "SUMMARY.md")
-FIELDS = ["date", "symbol", "entry_time", "entry", "stop", "target", "outcome", "R"]
+FIELDS = ["date", "symbol", "entry_time", "entry", "stop", "target", "outcome", "R", "news_count", "news_tags"]
+NEWS_DIR = os.path.join(HERE, "news")
+NEWS_LOOKBACK = datetime.timedelta(hours=24)
+_news_cache = {}
+
+
+def news_before(day, sym, entry_time):
+    """Headlines for sym saved by news_snapshot.py that came out in the 24 hours before
+    the entry. ("", "") when that day has no snapshot (unknown, left out of the comparison)."""
+    if day not in _news_cache:
+        path = os.path.join(NEWS_DIR, day + ".json")
+        _news_cache[day] = json.load(open(path, encoding="utf-8")) if os.path.exists(path) else None
+    items = _news_cache[day]
+    if items is None:
+        return "", ""
+    local = datetime.datetime.strptime(day + " " + entry_time, "%Y-%m-%d %I:%M %p")
+    entry = tm.eastern_to_utc(local)
+    hits = [it for it in items if it["ticker"] == sym and
+            entry - NEWS_LOOKBACK <= datetime.datetime.strptime(it["time"], "%Y-%m-%dT%H:%M:%SZ") < entry]
+    tags = sorted({t for it in hits for t in it["tags"]})
+    return str(len(hits)), "|".join(tags)
 
 
 def load_symbols():
@@ -59,6 +79,30 @@ def load_state():
     return {}
 
 
+def _row(label, ts):
+    if not ts:
+        return "| %s | 0 | - | - | - |" % label
+    n = len(ts)
+    return "| %s | %d | %.0f%% | %.0f%% | %+.2f |" % (
+        label, n, 100.0 * sum(1 for t in ts if float(t["R"]) > 0) / n,
+        100.0 * sum(1 for t in ts if t["outcome"] == "target") / n,
+        statistics.mean(float(t["R"]) for t in ts))
+
+
+def news_section(trades):
+    known = [t for t in trades if (t.get("news_count") or "") != ""]
+    out = ["", "## ข่าวก่อนเข้าเทรด (24 ชม. ก่อนเวลาเข้า, Yahoo)", ""]
+    if not known:
+        return out + ["ยังไม่มีไม้ที่มีข้อมูลข่าว (เริ่มเก็บข่าวตั้งแต่รอบ 21:40 น. แรก)"]
+    out += ["| กลุ่ม | ไม้ | ได้กำไร | ถึงเป้า | R เฉลี่ย |", "|---|---|---|---|---|",
+            _row("ไม่มีข่าว", [t for t in known if t["news_count"] == "0"]),
+            _row("มีข่าว", [t for t in known if t["news_count"] != "0"])]
+    for tag in sorted({g for t in known for g in (t.get("news_tags") or "").split("|") if g}):
+        out.append(_row("มีข่าว " + tag, [t for t in known if tag in (t.get("news_tags") or "").split("|")]))
+    out += ["", "ไม้ที่ยังไม่มีข้อมูลข่าว (ก่อนเริ่มเก็บ) ไม่นับในตารางนี้ | ตัวอย่างน้อยกว่า ~30 ไม้ต่อกลุ่ม ยังสรุปไม่ได้"]
+    return out
+
+
 def summarize(rows, state):
     trades = [r for r in rows if r["outcome"] != "no_signal"]
     days = state.get("days", [])
@@ -85,6 +129,7 @@ def summarize(rows, state):
             ts = [t for t in trades if t["symbol"] == sym]
             g = sum(1 for t in ts if float(t["R"]) > 0)
             lines.append("| %s | %d | %d | %+.2f |" % (sym, len(ts), g, statistics.mean(float(t["R"]) for t in ts)))
+    lines += news_section(trades)
     with open(SUMMARY, "w", encoding="utf-8") as fh:
         fh.write("\n".join(lines) + "\n")
     print("\n".join(lines))
@@ -131,8 +176,10 @@ def main():
                 rows.append({"date": d, "symbol": sym, "entry_time": "", "entry": "", "stop": "",
                              "target": "", "outcome": "no_signal", "R": "0"})
             for t in h["trades"]:
+                nc, nt = news_before(d, sym, t["time"])
                 rows.append({"date": d, "symbol": sym, "entry_time": t["time"], "entry": t["entry"],
-                             "stop": t["stop"], "target": t["target"], "outcome": t["outcome"], "R": t["R"]})
+                             "stop": t["stop"], "target": t["target"], "outcome": t["outcome"], "R": t["R"],
+                             "news_count": nc, "news_tags": nt})
             done.add((d, sym))
 
     state["days"] = sorted(state.get("days", []))
