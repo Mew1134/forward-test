@@ -15,6 +15,7 @@ import argparse
 import csv
 import datetime
 import json
+import re
 import os
 import statistics
 import sys
@@ -33,11 +34,19 @@ FIELDS = ["date", "symbol", "entry_time", "entry", "stop", "target", "outcome", 
 NEWS_DIR = os.path.join(HERE, "news")
 NEWS_LOOKBACK = datetime.timedelta(hours=24)
 _news_cache = {}
+# "ETF X bought/sold stock Y" flow reports: daily filler on every big ticker, not news.
+ETF_FLOW = re.compile(r"(\bETFs?\b|\b(Trust|ETF|Fund)\b.*\([A-Z]{2,5}\)|\([A-Z]{2,5}\) (Buys|Sells|Adds)|^What .+ (Bought|Sold):)", re.I)
+ETF_ACT = re.compile(r"\b(Bought|Buys|Buy|Sells|Sold|Adds?|Add to|Buying|Selling|Inflows?|Outflows?)\b", re.I)
+
+
+def is_etf_flow(title):
+    return bool(ETF_FLOW.search(title) and ETF_ACT.search(title))
 
 
 def news_before(day, sym, entry_time):
-    """Headlines for sym saved by news_snapshot.py that came out in the 24 hours before
-    the entry. ("", "") when that day has no snapshot (unknown, left out of the comparison)."""
+    """Tagged headlines (earnings, analyst, deal...) for sym, saved by news_snapshot.py, that
+    came out in the 24 hours before the entry; ETF-flow filler is skipped.
+    ("", "") when that day has no snapshot (unknown, left out of the comparison)."""
     if day not in _news_cache:
         path = os.path.join(NEWS_DIR, day + ".json")
         _news_cache[day] = json.load(open(path, encoding="utf-8")) if os.path.exists(path) else None
@@ -47,6 +56,7 @@ def news_before(day, sym, entry_time):
     local = datetime.datetime.strptime(day + " " + entry_time, "%Y-%m-%d %I:%M %p")
     entry = tm.eastern_to_utc(local)
     hits = [it for it in items if it["ticker"] == sym and
+            it["tags"] and not is_etf_flow(it["title"]) and
             entry - NEWS_LOOKBACK <= datetime.datetime.strptime(it["time"], "%Y-%m-%dT%H:%M:%SZ") < entry]
     tags = sorted({t for it in hits for t in it["tags"]})
     return str(len(hits)), "|".join(tags)
@@ -91,7 +101,7 @@ def _row(label, ts):
 
 def news_section(trades):
     known = [t for t in trades if (t.get("news_count") or "") != ""]
-    out = ["", "## ข่าวก่อนเข้าเทรด (24 ชม. ก่อนเวลาเข้า, Yahoo)", ""]
+    out = ["", "## ข่าวก่อนเข้าเทรด (24 ชม. ก่อนเวลาเข้า, Yahoo, เฉพาะข่าวที่มีป้ายประเภท ไม่นับข่าว ETF ซื้อขาย)", ""]
     if not known:
         return out + ["ยังไม่มีไม้ที่มีข้อมูลข่าว (เริ่มเก็บข่าวตั้งแต่รอบ 21:40 น. แรก)"]
     out += ["| กลุ่ม | ไม้ | ได้กำไร | ถึงเป้า | R เฉลี่ย |", "|---|---|---|---|---|",
