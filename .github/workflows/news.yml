@@ -1,0 +1,34 @@
+name: news-snapshot
+
+on:
+  schedule:
+    # 14:40 UTC จันทร์-ศุกร์ = 21:40 น. เวลาไทย (10 นาทีหลังตลาดสหรัฐเปิด ช่วงฤดูหนาว)
+    - cron: "40 14 * * 1-5"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: forward-test
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Save headlines
+        run: python3 news_snapshot.py
+      - name: Save results
+        run: |
+          git config user.name "forward-test-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add news
+          git diff --cached --quiet || git commit -m "news $(date -u +%F)"
+          git pull --rebase
+          git push
