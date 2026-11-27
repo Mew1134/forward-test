@@ -1,0 +1,11 @@
+# หุ้นที่ทดสอบ แก้/เพิ่ม/ลบได้ บรรทัดละ 1 ตัว
+TSLA
+NVDA
+AMD
+META
+AAPL
+MSFT
+AMZN
+GOOGL
+SPY
+QQQ
