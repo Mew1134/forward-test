@@ -31,8 +31,13 @@ def main():
     now = (dt.datetime.fromisoformat(a.now).replace(tzinfo=dt.timezone.utc) if a.now
            else dt.datetime.now(dt.timezone.utc))
     day = news.to_eastern(now).date().isoformat()
-    with open(os.path.join(HERE, "symbols.txt"), encoding="utf-8") as fh:
-        syms = [s.strip().upper() for s in fh if s.strip() and not s.startswith("#")]
+    syms = []
+    for name in ("symbols.txt", "symbols_extra.txt"):
+        path = os.path.join(HERE, name)
+        if os.path.exists(path):
+            with open(path, encoding="utf-8") as fh:
+                syms += [s.strip().upper() for s in fh if s.strip() and not s.startswith("#")
+                         and s.strip().upper() not in syms]
 
     fetcher = news.Fetcher(offline=a.offline, pause=1.0)
     items, errors = [], []

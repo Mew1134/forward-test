@@ -62,9 +62,18 @@ def news_before(day, sym, entry_time):
     return str(len(hits)), "|".join(tags)
 
 
-def load_symbols():
-    with open(os.path.join(HERE, "symbols.txt"), encoding="utf-8") as fh:
+def _read_list(name):
+    path = os.path.join(HERE, name)
+    if not os.path.exists(path):
+        return []
+    with open(path, encoding="utf-8") as fh:
         return [s.strip().upper() for s in fh if s.strip() and not s.startswith("#")]
+
+
+def load_symbols():
+    """Main watchlist (symbols.txt) first, then the experimental group (symbols_extra.txt)."""
+    main = _read_list("symbols.txt")
+    return main + [s for s in _read_list("symbols_extra.txt") if s not in main]
 
 
 def load_results():
@@ -113,8 +122,20 @@ def news_section(trades):
     return out
 
 
+def _per_stock(trades):
+    out = ["| หุ้น | ไม้ | ได้กำไร | R เฉลี่ย |", "|---|---|---|---|"]
+    for sym in sorted({t["symbol"] for t in trades}):
+        ts = [t for t in trades if t["symbol"] == sym]
+        g = sum(1 for t in ts if float(t["R"]) > 0)
+        out.append("| %s | %d | %d | %+.2f |" % (sym, len(ts), g, statistics.mean(float(t["R"]) for t in ts)))
+    return out
+
+
 def summarize(rows, state):
-    trades = [r for r in rows if r["outcome"] != "no_signal"]
+    main_syms = set(_read_list("symbols.txt"))
+    alltrades = [r for r in rows if r["outcome"] != "no_signal"]
+    trades = [r for r in alltrades if r["symbol"] in main_syms]
+    extra = [r for r in alltrades if r["symbol"] not in main_syms]
     days = state.get("days", [])
     lines = ["# ผลทดสอบเดินหน้า (forward test)", "",
              "กฎ: ทะลุกรอบ 15 นาทีแรก, stop กึ่งกลางกรอบ, เป้า 1R | เริ่ม %s | อัปเดต %s UTC" % (
@@ -134,12 +155,18 @@ def summarize(rows, state):
                   "| ปิดตอนตลาดปิด | %d | %.1f%% |" % (cls, 100.0 * cls / n),
                   "| **ได้กำไร (R > 0)** | **%d** | **%.1f%%** |" % (green, 100.0 * green / n),
                   "", "รวม %d ไม้ จาก %d วันทำการ | กำไรเฉลี่ย %+.3fR ต่อไม้ (ยังไม่หักค่าธรรมเนียม)" % (n, len(days), avg),
-                  "", "| หุ้น | ไม้ | ได้กำไร | R เฉลี่ย |", "|---|---|---|---|"]
-        for sym in sorted({t["symbol"] for t in trades}):
-            ts = [t for t in trades if t["symbol"] == sym]
-            g = sum(1 for t in ts if float(t["R"]) > 0)
-            lines.append("| %s | %d | %d | %+.2f |" % (sym, len(ts), g, statistics.mean(float(t["R"]) for t in ts)))
+                  ""] + _per_stock(trades)
     lines += news_section(trades)
+    extra_syms = [x for x in _read_list("symbols_extra.txt") if x not in main_syms]
+    if extra_syms or extra:
+        lines += ["", "## กลุ่มทดลอง (%s) ไม่นับรวมในผลหลักด้านบน" % ", ".join(extra_syms or sorted({t["symbol"] for t in extra})), ""]
+        if extra:
+            avg = statistics.mean(float(t["R"]) for t in extra)
+            green = sum(1 for t in extra if float(t["R"]) > 0)
+            lines += ["รวม %d ไม้ | ได้กำไร %.0f%% | กำไรเฉลี่ย %+.3fR ต่อไม้" % (len(extra), 100.0 * green / len(extra), avg), ""]
+            lines += _per_stock(extra)
+        else:
+            lines.append("ยังไม่มีไม้เทรด")
     with open(SUMMARY, "w", encoding="utf-8") as fh:
         fh.write("\n".join(lines) + "\n")
     print("\n".join(lines))
